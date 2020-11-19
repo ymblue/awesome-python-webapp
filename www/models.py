@@ -1,5 +1,7 @@
 import time, uuid
 from orms import Model, StringField, FloatField, BooleanField, TextField
+
+#通过当前时间戳(1970纪元后经过的浮点秒数)与uuid的拼接
 def next_id():
     return '%015d%s000' % (int(time.time() * 1000), uuid.uuid4().hex)
 

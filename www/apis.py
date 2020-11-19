@@ -1,5 +1,5 @@
 import json, logging, inspect, functools
-
+#定义API异常类型
 class APIError(Exception):
 
     def __init__(self, error, data='', message=''):

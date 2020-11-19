@@ -3,10 +3,11 @@ import asyncio, logging
 import aiomysql
 from MySQLdb.compat import StandardError
 
-
+#日志输出
 def log(sql, args=()):
     logging.info('SQL: %s' % sql)
 
+#创建连接池
 async def create_pool(loop, **kw):
     logging.info('create database connection pool...')
     global __pool
@@ -23,19 +24,26 @@ async def create_pool(loop, **kw):
         loop=loop
     )
 
+#查询数据
 async def select(sql, args, size=None):
     log(sql, args)
     global __pool
+    #获取数据库链接
     async with __pool.get() as conn:
+        #获取游标
         async with conn.cursor(aiomysql.DictCursor) as cur:
+            #执行sql语句
             await cur.execute(sql.replace('?', '%s'), args or ())
             if size:
+                #获取size条数据
                 rs = await cur.fetchmany(size)
             else:
+                #获取所有数据
                 rs = await cur.fetchall()
         logging.info('rows returned: %s' % len(rs))
         return rs
 
+#数据处理执行方法
 async def execute(sql, args, autocommit=True):
     log(sql)
     async with __pool.get() as conn:
@@ -44,6 +52,7 @@ async def execute(sql, args, autocommit=True):
         try:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(sql.replace('?', '%s'), args)
+                #获取处理数据的数量数
                 affected = cur.rowcount
             if not autocommit:
                 await conn.commit()
@@ -53,23 +62,30 @@ async def execute(sql, args, autocommit=True):
             raise
         return affected
 
+#返回num个？
 def create_args_string(num):
     L = []
     for n in range(num):
         L.append('?')
     return ', '.join(L)
 
+#属性类
 class Field(object):
 
     def __init__(self, name, column_type, primary_key, default):
+        #属性名称
         self.name = name
+        #属性类型
         self.column_type = column_type
+        #是否是主键
         self.primary_key = primary_key
+        #默认值
         self.default = default
 
     def __str__(self):
         return '<%s, %s:%s>' % (self.__class__.__name__, self.column_type, self.name)
 
+#字符串属性类
 class StringField(Field):
 
     def __init__(self, name=None, primary_key=False, default=None, ddl='varchar(100)'):
@@ -95,14 +111,17 @@ class TextField(Field):
     def __init__(self, name=None, default=None):
         super().__init__(name, 'text', False, default)
 
+#Model的元类：读取子类的映射信息
 class ModelMetaclass(type):
 
     def __new__(cls, name, bases, attrs):
-        if name=='Model':
+        #排除Model本身
+        if name == 'Model':
             return type.__new__(cls, name, bases, attrs)
         tableName = attrs.get('__table__', None) or name
         logging.info('found model: %s (table: %s)' % (name, tableName))
         mappings = dict()
+        #存放除主键之外的属性名称
         fields = []
         primaryKey = None
         for k, v in attrs.items():
@@ -118,8 +137,10 @@ class ModelMetaclass(type):
                     fields.append(k)
         if not primaryKey:
             raise StandardError('Primary key not found.')
+        #移除attrs中的所有属性名
         for k in mappings.keys():
             attrs.pop(k)
+        #除主键外的属性名的列表,如：['`id`','`name`']
         escaped_fields = list(map(lambda f: '`%s`' % f, fields))
         attrs['__mappings__'] = mappings # 保存属性和列的映射关系
         attrs['__table__'] = tableName
@@ -145,12 +166,15 @@ class Model(dict, metaclass=ModelMetaclass):
     def __setattr__(self, key, value):
         self[key] = value
 
+    #获取属性值
     def getValue(self, key):
         return getattr(self, key, None)
 
+    #获取属性值，为None的话就取默认值
     def getValueOrDefault(self, key):
         value = getattr(self, key, None)
         if value is None:
+            #从属性与列的映射关系中获取属性
             field = self.__mappings__[key]
             if field.default is not None:
                 value = field.default() if callable(field.default) else field.default
@@ -162,15 +186,18 @@ class Model(dict, metaclass=ModelMetaclass):
     async def findAll(cls, where=None, args=None, **kw):
         ' find objects by where clause. '
         sql = [cls.__select__]
+        #加入where条件
         if where:
             sql.append('where')
             sql.append(where)
         if args is None:
             args = []
+        #加入orderBy条件
         orderBy = kw.get('orderBy', None)
         if orderBy:
             sql.append('order by')
             sql.append(orderBy)
+        #加入limit条件
         limit = kw.get('limit', None)
         if limit is not None:
             sql.append('limit')
@@ -188,6 +215,7 @@ class Model(dict, metaclass=ModelMetaclass):
     @classmethod
     async def findNumber(cls, selectField, where=None, args=None):
         ' find number by select and where. '
+        #TODO:没有弄清楚_num_的意思
         sql = ['select %s _num_ from `%s`' % (selectField, cls.__table__)]
         if where:
             sql.append('where')
@@ -197,6 +225,7 @@ class Model(dict, metaclass=ModelMetaclass):
             return None
         return rs[0]['_num_']
 
+    #通过主键查询
     @classmethod
     async def find(cls, pk):
         ' find object by primary key. '
@@ -205,20 +234,23 @@ class Model(dict, metaclass=ModelMetaclass):
             return None
         return cls(**rs[0])
 
+    #写入数据
     async def save(self):
         args = list(map(self.getValueOrDefault, self.__fields__))
         args.append(self.getValueOrDefault(self.__primary_key__))
         rows = await execute(self.__insert__, args)
         if rows != 1:
-            logging.warn('failed to insert record: affected rows: %s' % rows)
+            logging.warning('failed to insert record: affected rows: %s' % rows)
 
+    #更新数据
     async def update(self):
         args = list(map(self.getValue, self.__fields__))
         args.append(self.getValue(self.__primary_key__))
         rows = await execute(self.__update__, args)
         if rows != 1:
-            logging.warn('failed to update by primary key: affected rows: %s' % rows)
+            logging.warning('failed to update by primary key: affected rows: %s' % rows)
 
+    #通过主键移除数据
     async def remove(self):
         args = [self.getValue(self.__primary_key__)]
         rows = await execute(self.__delete__, args)

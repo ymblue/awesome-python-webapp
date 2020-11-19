@@ -3,6 +3,7 @@ from urllib import parse
 from aiohttp import web
 from apis import APIError
 
+#get方式访问
 def get(path):
 
     def decorator(func):
@@ -25,9 +26,10 @@ def post(path):
         return wrapper
     return decorator
 
-
+#获取必要的参数
 def get_required_kw_args(fn):
     args = []
+    #获取所有的参数
     params = inspect.signature(fn).parameters
     for name, param in params.items():
         if param.kind == inspect.Parameter.KEYWORD_ONLY and param.default == inspect.Parameter.empty:
